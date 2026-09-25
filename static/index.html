@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Legal Document Assistant</title>
+  <meta name="description" content="Analyze rental and lease agreements with privacy-first, local document analysis">
+  <style>
+    /* ===== CSS Variables ===== */
+    :root {
+      --primary: #2563eb;
+      --primary-dark: #1e40af;
+      --primary-light: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text-primary: #1f2937;
+      --text-secondary: #6b7280;
+      --text-muted: #9ca3af;
+      --bg-primary: #ffffff;
+      --bg-secondary: #f9fafb;
+      --bg-tertiary: #f3f4f6;
+      --border: #e5e7eb;
+      --border-focus: #3b82f6;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --radius: 8px;
+      --radius-lg: 12px;
+    }
+
+    /* ===== Base Styles ===== */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--text-primary);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    /* ===== Skip Link ===== */
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      z-index: 999;
+      padding: 1rem 1.5rem;
+      background: var(--primary);
+      color: white;
+      text-decoration: none;
+      border-radius: var(--radius);
+    }
+
+    .skip-link:focus {
+      left: 1rem;
+      top: 1rem;
+      outline: 3px solid var(--warning);
+      outline-offset: 2px;
+    }
+
+    /* ===== Focus Styles ===== */
+    :focus-visible {
+      outline: 3px solid var(--border-focus);
+      outline-offset: 2px;
+    }
+
+    /* ===== Container ===== */
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      animation: fadeIn 0.6s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* ===== Header ===== */
+    header {
+      background: var(--bg-primary);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem 2rem;
+      box-shadow: var(--shadow-lg);
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .badge {
+      display: inline-block;
+      background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-top: 1rem;
+      box-shadow: var(--shadow);
+    }
+
+    /* ===== Sections ===== */
+    section {
+      background: var(--bg-primary);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow-lg);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    section:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    h2::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 1.5rem;
+      background: linear-gradient(180deg, var(--primary) 0%, var(--primary-light) 100%);
+      border-radius: 2px;
+    }
+
+    /* ===== Forms ===== */
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    label {
+      font-weight: 500;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input[type="file"] {
+      display: block;
+      width: 100%;
+      padding: 0.75rem;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-secondary);
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    input[type="file"]:hover {
+      border-color: var(--primary-light);
+      background: var(--bg-tertiary);
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 1rem;
+      transition: all 0.2s;
+      background: var(--bg-primary);
+    }
+
+    input[type="text"]:hover {
+      border-color: var(--primary-light);
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--primary);
+      background: var(--bg-primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    button {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      padding: 0.875rem 2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--shadow);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ===== Status Message ===== */
+    #status {
+      background: var(--bg-primary);
+      border-radius: var(--radius);
+      padding: 1rem 1.5rem;
+      margin: 1rem 0;
+      font-weight: 500;
+      text-align: center;
+      box-shadow: var(--shadow);
+      display: none;
+    }
+
+    #status:not(:empty) {
+      display: block;
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    #status.success {
+      background: #d1fae5;
+      color: #065f46;
+      border-left: 4px solid var(--success);
+    }
+
+    #status.error {
+      background: #fee2e2;
+      color: #991b1b;
+      border-left: 4px solid var(--danger);
+    }
+
+    #status.loading {
+      background: #dbeafe;
+      color: #1e40af;
+      border-left: 4px solid var(--primary);
+    }
+
+    /* ===== Summary (Definition List) ===== */
+    #summary {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.75rem 1.5rem;
+      background: var(--bg-secondary);
+      padding: 1.5rem;
+      border-radius: var(--radius);
+    }
+
+    dt {
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+
+    dd {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    /* ===== Findings List ===== */
+    #findings {
+      list-style: none;
+    }
+
+    #findings li {
+      background: var(--bg-secondary);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      border-left: 4px solid var(--primary);
+      transition: all 0.2s;
+    }
+
+    #findings li:hover {
+      background: var(--bg-tertiary);
+      transform: translateX(4px);
+    }
+
+    #findings strong {
+      display: block;
+      color: var(--primary);
+      font-size: 1.125rem;
+      margin-bottom: 0.5rem;
+    }
+
+    #findings p {
+      margin: 0.5rem 0;
+      color: var(--text-secondary);
+    }
+
+    #findings blockquote {
+      margin: 1rem 0 0 0;
+      padding: 1rem;
+      border-left: 4px solid var(--primary-light);
+      background: var(--bg-primary);
+      border-radius: var(--radius);
+      font-style: italic;
+      color: var(--text-primary);
+    }
+
+    .finding-meta {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* ===== Checklist ===== */
+    #checklist {
+      list-style: none;
+    }
+
+    #checklist li {
+      background: var(--bg-secondary);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      transition: all 0.2s;
+    }
+
+    #checklist li:hover {
+      background: var(--bg-tertiary);
+    }
+
+    #checklist label {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      cursor: pointer;
+      font-weight: 400;
+      color: var(--text-primary);
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    #checklist input[type="checkbox"] {
+      width: 1.25rem;
+      height: 1.25rem;
+      cursor: pointer;
+      accent-color: var(--success);
+    }
+
+    /* ===== Answer Section ===== */
+    #answer {
+      margin-top: 1.5rem;
+    }
+
+    #answer p {
+      margin-bottom: 1rem;
+    }
+
+    #answer blockquote {
+      margin: 1rem 0;
+      padding: 1.25rem;
+      border-left: 4px solid var(--success);
+      background: var(--bg-secondary);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+    }
+
+    .answer-meta {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+
+    /* ===== Disclaimer ===== */
+    .disclaimer {
+      background: var(--bg-primary);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      box-shadow: var(--shadow);
+      border: 2px solid var(--warning);
+    }
+
+    .disclaimer::before {
+      content: "⚠️";
+      display: block;
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    /* ===== Hidden State ===== */
+    [hidden] {
+      display: none !important;
+    }
+
+    /* ===== Responsive Design ===== */
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem 0.5rem;
+      }
+
+      h1 {
+        font-size: 2rem;
+      }
+
+      .subtitle {
+        font-size: 1rem;
+      }
+
+      section {
+        padding: 1.5rem;
+      }
+
+      h2 {
+        font-size: 1.25rem;
+      }
+
+      #summary {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+      }
+
+      dt {
+        margin-top: 0.5rem;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+
+    /* ===== Loading Animation ===== */
+    .loading-spinner {
+      display: inline-block;
+      width: 1rem;
+      height: 1rem;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 0.6s linear infinite;
+      margin-right: 0.5rem;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ===== Empty State ===== */
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <div class="container">
+    <header>
+      <h1>⚖️ Legal Document Assistant</h1>
+      <p class="subtitle">Analyze rental and lease agreements with confidence</p>
+      <div class="badge">🔒 100% Private & Secure</div>
+    </header>
+
+    <main id="main">
+      <!-- Upload Section -->
+      <section aria-labelledby="upload-title">
+        <h2 id="upload-title">📄 Upload Document</h2>
+        <form id="upload-form">
+          <label for="doc-file">Select a PDF or TXT file (max 5 MB)</label>
+          <input id="doc-file" name="document" type="file" accept=".pdf,.txt" required>
+          <button type="submit">
+            <span class="button-text">Analyze Document</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Status Message -->
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <!-- Results Container -->
+      <div id="results" hidden>
+        <!-- Summary Section -->
+        <section aria-labelledby="summary-title">
+          <h2 id="summary-title">📊 Document Summary</h2>
+          <dl id="summary"></dl>
+        </section>
+
+        <!-- Findings Section -->
+        <section aria-labelledby="clauses-title">
+          <h2 id="clauses-title">🔍 Clauses to Review</h2>
+          <ul id="findings"></ul>
+        </section>
+
+        <!-- Checklist Section -->
+        <section aria-labelledby="checklist-title">
+          <h2 id="checklist-title">✅ Pre-Signing Checklist</h2>
+          <ul id="checklist"></ul>
+        </section>
+
+        <!-- Q&A Section -->
+        <section aria-labelledby="ask-title">
+          <h2 id="ask-title">💬 Ask a Question</h2>
+          <form id="ask-form">
+            <label for="question">Ask about your document</label>
+            <input 
+              id="question" 
+              name="question" 
+              type="text" 
+              maxlength="500" 
+              autocomplete="off"
+              placeholder="e.g., How much notice do I need to give?">
+            <button type="submit">
+              <span class="button-text">Get Answer</span>
+            </button>
+          </form>
+          <div id="answer" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <!-- Disclaimer -->
+      <div class="disclaimer">
+        <strong>Important Notice</strong><br>
+        This tool provides general information about your document. It is not legal advice and does not replace consultation with a qualified lawyer.
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
