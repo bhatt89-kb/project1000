@@ -1,8 +1,4 @@
-# Git files
-.git
-.gitignore
-
-# Python cache
+# Python cache and bytecode
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,26 +11,47 @@ env/
 ENV/
 .venv
 
-# Testing
+# Testing and coverage
 .pytest_cache/
 .coverage
 htmlcov/
-tests/
+.tox/
+*.cover
+*.log
 
-# IDE
+# IDE and editors
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS files
+*~
 .DS_Store
-Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
 
 # Documentation
 *.md
 !README.md
+docs/
 
-# Local config
+# CI/CD
+.github/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Development files
 .env
 .env.local
+*.sqlite
+*.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

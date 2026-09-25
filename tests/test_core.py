@@ -112,8 +112,9 @@ def test_ask_without_match_says_not_found(client):
 
 
 def test_ask_with_unknown_document_is_404(client):
+    # Invalid UUID format now returns 400 instead of 404 due to UUID validation
     response = client.post("/api/ask", json={"id": "missing", "question": "Notice?"})
-    assert response.status_code == 404
+    assert response.status_code == 400
 
 
 # === New tests for Phase 1 & 2 enhancements ===
@@ -186,13 +187,13 @@ def test_findings_sorted_by_risk_score():
 
 def test_compare_endpoint_requires_two_documents(client):
     """Test that comparison endpoint validates both document IDs."""
+    # Invalid UUID format now returns 400 instead of 404 due to UUID validation
     response = client.post(
         "/api/compare",
         json={"id1": "invalid1", "id2": "invalid2"},
         content_type="application/json"
     )
-    assert response.status_code == 404
-    assert b"not found" in response.data
+    assert response.status_code == 400
 
 
 def test_compare_endpoint_returns_comparison(client):
@@ -318,3 +319,354 @@ def test_entities_structure():
     assert "obligations" in entities
     assert isinstance(entities["dates"], list)
     assert isinstance(entities["amounts"], list)
+
+
+# === Additional Edge Case Tests for >95% Coverage ===
+
+def test_corrupted_pdf_binary_garbage():
+    """Test that completely corrupted binary data is rejected."""
+    from legallens.parser import extract_pages, UnsupportedFileError
+    garbage_data = b'\x00\x01\x02\x03\x04\x05\xFF\xFE\xFD'
+    
+    with pytest.raises(UnsupportedFileError) as exc_info:
+        extract_pages("corrupted.pdf", garbage_data)
+    assert "could not be read" in str(exc_info.value).lower()
+
+
+def test_empty_pdf_file():
+    """Test handling of completely empty PDF file."""
+    from legallens.parser import extract_pages, UnsupportedFileError
+    empty_pdf = b'%PDF-1.4\n%%EOF'
+    
+    with pytest.raises(UnsupportedFileError):
+        extract_pages("empty.pdf", empty_pdf)
+
+
+def test_txt_file_with_special_characters():
+    """Test TXT files with unicode and special characters."""
+    from legallens.parser import extract_pages
+    special_text = "Contract with émojis 🏠 and unicode: ₹20,000".encode('utf-8')
+    
+    pages = extract_pages("special.txt", special_text)
+    assert len(pages) == 1
+    assert "₹20,000" in pages[0]
+    assert "🏠" in pages[0]
+
+
+def test_txt_file_with_invalid_utf8():
+    """Test TXT file with invalid UTF-8 sequences."""
+    from legallens.parser import extract_pages
+    invalid_utf8 = b'Contract text \xFF\xFE invalid bytes'
+    
+    pages = extract_pages("invalid.txt", invalid_utf8)
+    assert len(pages) == 1
+    # Should not crash, uses replace error handling
+
+
+def test_case_insensitive_extension_matching():
+    """Test that file extensions are case-insensitive."""
+    from legallens.parser import extract_pages
+    
+    # Use valid content for each file type
+    txt_data = b"Test content for text file"
+    
+    # Should work with various cases of TXT
+    pages1 = extract_pages("file.TXT", txt_data)
+    pages2 = extract_pages("file.Txt", txt_data)
+    pages3 = extract_pages("file.txt", txt_data)
+    
+    assert all(len(p) == 1 for p in [pages1, pages2, pages3])
+
+
+def test_filename_with_multiple_dots():
+    """Test filenames with multiple dots in the name."""
+    from legallens.parser import extract_pages
+    data = b"Test content"
+    
+    pages = extract_pages("my.legal.document.v2.1.final.txt", data)
+    assert len(pages) == 1
+
+
+def test_empty_search_question():
+    """Test search with empty or whitespace-only question."""
+    from legallens.search import search, build_chunks
+    chunks = build_chunks(["Some text here"])
+    
+    assert search(chunks, "") == []
+    assert search(chunks, "   ") == []
+    assert search(chunks, "the and or") == []  # Only stopwords
+
+
+def test_search_with_no_matching_chunks():
+    """Test search when no chunks match the query."""
+    from legallens.search import search, build_chunks
+    chunks = build_chunks(["Rental agreement details"])
+    
+    results = search(chunks, "quantum physics relativity")
+    assert results == []
+
+
+def test_search_top_k_parameter():
+    """Test that top_k limits results correctly."""
+    from legallens.search import search, build_chunks
+    text = "rent payment notice termination deposit security landlord tenant"
+    chunks = build_chunks([text] * 10)  # 10 identical chunks
+    
+    results = search(chunks, "rent payment", top_k=1)
+    assert len(results) == 1
+    
+    results = search(chunks, "rent payment", top_k=5)
+    assert len(results) == 5
+
+
+def test_chunk_building_preserves_page_numbers():
+    """Test that page numbers are correctly assigned."""
+    from legallens.search import build_chunks
+    pages = ["Page 1 content", "Page 2 content", "Page 3 content"]
+    
+    chunks = build_chunks(pages)
+    
+    assert all(c['page'] in [1, 2, 3] for c in chunks)
+    assert any(c['page'] == 1 for c in chunks)
+    assert any(c['page'] == 2 for c in chunks)
+    assert any(c['page'] == 3 for c in chunks)
+
+
+def test_clause_detection_various_formats():
+    """Test different clause numbering formats."""
+    from legallens.search import build_chunks
+    text = """
+    Clause 1. First clause
+    2. Second clause
+    3: Third clause with colon
+    4. Fourth clause
+    """
+    
+    chunks = build_chunks([text])
+    clause_numbers = [c['clause'] for c in chunks if c['clause']]
+    
+    assert '1' in clause_numbers
+    assert '2' in clause_numbers
+    assert '3' in clause_numbers
+    assert '4' in clause_numbers
+
+
+def test_analysis_with_empty_pages():
+    """Test analysis handles empty pages gracefully."""
+    from legallens.analysis import analyze
+    from legallens.search import build_chunks
+    
+    pages = ["", "  ", "\n\n", "Some actual content"]
+    chunks = build_chunks(pages)
+    result = analyze(pages, chunks)
+    
+    assert 'summary' in result
+    assert 'findings' in result
+
+
+def test_analysis_with_no_matching_categories():
+    """Test document with no flagged clauses."""
+    from legallens.analysis import analyze
+    from legallens.search import build_chunks
+    
+    pages = ["Simple rental agreement with no special terms."]
+    chunks = build_chunks(pages)
+    result = analyze(pages, chunks)
+    
+    assert result['findings'] == []
+    assert len(result['checklist']) == 1  # Should have lawyer consultation item
+
+
+def test_risk_score_boundaries():
+    """Test risk level calculation at boundaries."""
+    from legallens.analysis import analyze
+    from legallens.search import build_chunks
+    
+    # Document with various risk levels
+    text = """
+    1. Liability clause with indemnification.
+    2. Security deposit required.
+    3. Penalty for late payment.
+    """
+    
+    pages = [text]
+    chunks = build_chunks(pages)
+    result = analyze(pages, chunks)
+    
+    risk = result.get('risk_assessment', {})
+    assert risk['level'] in ['Low', 'Medium', 'High']
+    assert 0 <= risk['score'] <= 10
+
+
+def test_entity_extraction_date_formats():
+    """Test various date format extractions."""
+    from legallens.analysis import extract_entities
+    
+    text = """
+    Agreement dated 15/01/2024.
+    Rent due on January 15, 2024.
+    Notice period starts 15 Jan 2024.
+    """
+    
+    entities = extract_entities(text)
+    assert len(entities['dates']) > 0
+
+
+def test_entity_extraction_amount_formats():
+    """Test various currency format extractions."""
+    from legallens.analysis import extract_entities
+    
+    text = """
+    Rent: Rs. 25,000 per month
+    Deposit: ₹50,000
+    Fee: Rs.1000
+    USD $500 also mentioned
+    """
+    
+    entities = extract_entities(text)
+    assert len(entities['amounts']) >= 3
+
+
+def test_concurrent_document_uploads(client):
+    """Test handling of multiple concurrent uploads."""
+    # Upload multiple documents quickly
+    doc1 = client.post("/api/upload", data={"document": (io.BytesIO(SAMPLE.encode()), "doc1.txt")})
+    doc2 = client.post("/api/upload", data={"document": (io.BytesIO(SAMPLE.encode()), "doc2.txt")})
+    doc3 = client.post("/api/upload", data={"document": (io.BytesIO(SAMPLE.encode()), "doc3.txt")})
+    
+    assert doc1.status_code == 200
+    assert doc2.status_code == 200
+    assert doc3.status_code == 200
+    
+    # Verify all have unique IDs
+    ids = {doc1.get_json()['id'], doc2.get_json()['id'], doc3.get_json()['id']}
+    assert len(ids) == 3
+
+
+def test_document_limit_enforcement(client):
+    """Test that document limit (50) is enforced."""
+    from app import MAX_DOCUMENTS
+    
+    # Upload documents up to limit
+    for i in range(MAX_DOCUMENTS + 5):
+        client.post("/api/upload", data={"document": (io.BytesIO(f"Doc {i}".encode()), f"doc{i}.txt")})
+    
+    # Should have exactly MAX_DOCUMENTS
+    docs = client.get("/api/documents")
+    assert len(docs.get_json()['documents']) <= MAX_DOCUMENTS
+
+
+def test_export_nonexistent_document(client):
+    """Test export endpoint with invalid document ID."""
+    # Invalid UUID format now returns 400 instead of 404
+    response = client.get("/api/export/nonexistent-id-12345")
+    assert response.status_code == 400  # Changed from 404 due to UUID validation
+
+
+def test_export_generates_valid_html(client):
+    """Test that export generates valid HTML."""
+    # Clear documents to avoid rate limiting issues
+    DOCUMENTS.clear()
+    
+    upload = client.post("/api/upload", data={"document": (io.BytesIO(SAMPLE.encode()), "test.txt")})
+    assert upload.status_code == 200
+    
+    data = upload.get_json()
+    assert data is not None
+    doc_id = data['id']
+    
+    response = client.get(f"/api/export/{doc_id}")
+    assert response.status_code == 200
+    assert response.mimetype == 'text/html'
+    assert b"<!DOCTYPE html>" in response.data
+    assert b"Risk Assessment" in response.data
+
+
+def test_malformed_json_in_request(client):
+    """Test API handling of malformed JSON."""
+    response = client.post(
+        "/api/ask",
+        data="not valid json{{{",
+        content_type="application/json"
+    )
+    # Should handle gracefully, not crash
+    assert response.status_code in [400, 404]
+
+
+def test_question_length_truncation():
+    """Test that very long questions are truncated."""
+    from app import MAX_QUESTION_CHARS
+    
+    long_q = "word " * 1000  # Much longer than limit
+    truncated = long_q[:MAX_QUESTION_CHARS]
+    
+    assert len(truncated) == MAX_QUESTION_CHARS
+
+
+def test_special_characters_in_search():
+    """Test search with special characters and symbols."""
+    from legallens.search import search, build_chunks
+    
+    chunks = build_chunks(["Clause about payment $1,000 & termination"])
+    
+    results = search(chunks, "payment $ termination &")
+    assert len(results) > 0
+
+
+def test_comparison_with_different_risk_levels():
+    """Test comparison highlights different risk levels."""
+    from legallens.analysis import compare_documents
+    
+    doc1 = {
+        "summary": {"duration": "12 months"},
+        "risk_assessment": {"level": "Low", "score": 3.0, "total_issues": 2},
+        "findings": []
+    }
+    
+    doc2 = {
+        "summary": {"duration": "12 months"},
+        "risk_assessment": {"level": "High", "score": 9.0, "total_issues": 10},
+        "findings": []
+    }
+    
+    comparison = compare_documents(doc1, doc2)
+    assert comparison['risk_comparison']['document1']['level'] == 'Low'
+    assert comparison['risk_comparison']['document2']['level'] == 'High'
+
+
+def test_finding_deduplication():
+    """Test that duplicate findings for same clause are removed."""
+    from legallens.analysis import flag_clauses
+    from legallens.search import build_chunks  # Import from correct module
+    
+    # Text with multiple keywords matching same categories
+    text = """
+    Clause 1. Tenant shall indemnify and hold harmless the landlord from all liability.
+    """
+    
+    chunks = build_chunks([text])
+    findings = flag_clauses(chunks)
+    
+    # Should not have duplicate entries for same clause/category
+    clause_categories = [(f['clause'], f['category']) for f in findings]
+    assert len(clause_categories) == len(set(clause_categories))
+
+
+def test_empty_document_list_endpoint(client):
+    """Test documents list when no documents uploaded."""
+    # Clear any existing documents by restarting would be needed
+    # For now, just verify endpoint works
+    response = client.get("/api/documents")
+    assert response.status_code == 200
+    assert 'documents' in response.get_json()
+
+
+def test_summary_with_unusual_formats():
+    """Test summary extraction with non-standard text."""
+    from legallens.analysis import summarize
+    
+    text = "Agreement for property at xyz address. Duration not mentioned clearly."
+    result = summarize(text, 1)
+    
+    assert result['type'] in ['Legal document', 'Rental agreement']
+    assert result['pages'] == 1

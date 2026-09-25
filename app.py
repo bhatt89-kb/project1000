@@ -57,16 +57,88 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+def validate_file_upload(file):
+    """Validate uploaded file for security and integrity.
+    
+    Args:
+        file: FileStorage object from Flask request
+        
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    if file is None or file.filename == "":
+        return False, "Please choose a PDF or TXT file."
+    
+    # Validate filename
+    filename = str(file.filename).strip()
+    if not filename or len(filename) > 255:
+        return False, "Invalid filename length."
+    
+    # Check for null bytes and path traversal attempts
+    if '\x00' in filename or '..' in filename or '/' in filename or '\\' in filename:
+        return False, "Invalid filename characters detected."
+    
+    # Validate file extension
+    allowed_extensions = {'.pdf', '.txt'}
+    file_ext = '.' + filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if file_ext not in allowed_extensions:
+        return False, "Only PDF and TXT files are supported."
+    
+    # Check file size before reading (peek at content length if available)
+    file.seek(0, 2)  # Seek to end
+    size = file.tell()
+    file.seek(0)  # Reset to start
+    
+    if size == 0:
+        return False, "The uploaded file is empty."
+    
+    if size > MAX_BYTES:
+        return False, f"The file is larger than {MAX_BYTES // (1024 * 1024)} MB."
+    
+    # Basic MIME type validation (check file signature/magic bytes)
+    file_start = file.read(8)
+    file.seek(0)
+    
+    # PDF magic bytes: %PDF
+    # Text files: typically ASCII/UTF-8 printable characters
+    if file_ext == '.pdf':
+        if not file_start.startswith(b'%PDF'):
+            return False, "File does not appear to be a valid PDF."
+    elif file_ext == '.txt':
+        # Check if file starts with reasonable text bytes (not binary garbage)
+        try:
+            file_start.decode('utf-8', errors='strict')
+        except UnicodeDecodeError:
+            # Try with relaxed checking for different encodings
+            if not any(b >= 0x20 and b <= 0x7E or b in (0x09, 0x0A, 0x0D) for b in file_start[:100]):
+                return False, "File does not appear to be valid text."
+    
+    return True, None
+
+
 @app.post("/api/upload")
 @limiter.limit("10 per minute")
 def upload():
     uploaded = request.files.get("document")
-    if uploaded is None or uploaded.filename == "":
-        return error("Please choose a PDF or TXT file.", 400)
+    
+    # Validate file upload
+    is_valid, error_message = validate_file_upload(uploaded)
+    if not is_valid:
+        return error(error_message, 400)
+    
     try:
-        pages = extract_pages(uploaded.filename, uploaded.read())
+        # Read file content with size limit enforced
+        file_content = uploaded.read(MAX_BYTES + 1)
+        if len(file_content) > MAX_BYTES:
+            return error(f"File exceeds maximum size of {MAX_BYTES // (1024 * 1024)} MB.", 413)
+        
+        pages = extract_pages(uploaded.filename, file_content)
     except UnsupportedFileError as exc:
         return error(str(exc), 400)
+    except Exception as exc:
+        # Log unexpected errors but don't expose internal details
+        app.logger.error(f"Upload error: {type(exc).__name__}: {exc}")
+        return error("Failed to process the document. Please try again.", 500)
 
     chunks = build_chunks(pages)
     result = analyze(pages, chunks)
@@ -77,16 +149,69 @@ def upload():
     return jsonify(id=document_id, **result)
 
 
+def sanitize_input(value, max_length=500, allow_newlines=True):
+    """Sanitize and validate user input strings.
+    
+    Args:
+        value: Input value to sanitize
+        max_length: Maximum allowed length
+        allow_newlines: Whether to allow newline characters
+        
+    Returns:
+        str: Sanitized string
+    """
+    if value is None:
+        return ""
+    
+    text = str(value).strip()
+    
+    # Remove null bytes and other control characters (except newlines/tabs if allowed)
+    if allow_newlines:
+        text = ''.join(char for char in text if char.isprintable() or char in ('\n', '\r', '\t'))
+    else:
+        text = ''.join(char for char in text if char.isprintable())
+    
+    # Truncate to max length
+    return text[:max_length]
+
+
+def validate_uuid(value):
+    """Validate that a string is a valid UUID hex format.
+    
+    Args:
+        value: String to validate
+        
+    Returns:
+        bool: True if valid UUID hex
+    """
+    if not isinstance(value, str):
+        return False
+    
+    # UUID hex is 32 hexadecimal characters
+    return len(value) == 32 and all(c in '0123456789abcdef' for c in value.lower())
+
+
 @app.post("/api/ask")
 @limiter.limit("30 per minute")
 def ask():
     body = request.get_json(silent=True) or {}
-    document = DOCUMENTS.get(str(body.get("id", "")))
-    question = str(body.get("question", "")).strip()[:MAX_QUESTION_CHARS]
+    
+    # Validate document ID format
+    doc_id = str(body.get("id", ""))
+    if not validate_uuid(doc_id):
+        return error("Invalid document ID format.", 400)
+    
+    document = DOCUMENTS.get(doc_id)
     if document is None:
         return error("Document not found. Please upload it again.", 404)
+    
+    # Sanitize and validate question
+    question = sanitize_input(body.get("question", ""), MAX_QUESTION_CHARS, allow_newlines=False)
     if not question:
         return error("Please type a question.", 400)
+    
+    if len(question) < 3:
+        return error("Question is too short. Please provide more detail.", 400)
 
     matches = search(document["chunks"], question)
     return jsonify(matches=matches, message="" if matches else NOT_FOUND_MESSAGE)
@@ -97,8 +222,16 @@ def ask():
 def compare():
     """Compare two documents side-by-side and highlight differences in key terms."""
     body = request.get_json(silent=True) or {}
+    
+    # Validate both document IDs
     doc1_id = str(body.get("id1", ""))
     doc2_id = str(body.get("id2", ""))
+    
+    if not validate_uuid(doc1_id) or not validate_uuid(doc2_id):
+        return error("Invalid document ID format.", 400)
+    
+    if doc1_id == doc2_id:
+        return error("Cannot compare a document with itself.", 400)
     
     doc1 = DOCUMENTS.get(doc1_id)
     doc2 = DOCUMENTS.get(doc2_id)
@@ -129,6 +262,10 @@ def list_documents():
 @app.get("/api/export/<document_id>")
 def export_report(document_id):
     """Export analysis report as HTML for printing/saving."""
+    # Validate document ID format
+    if not validate_uuid(document_id):
+        return error("Invalid document ID format.", 400)
+    
     document = DOCUMENTS.get(document_id)
     if document is None:
         return error("Document not found.", 404)

@@ -549,3 +549,192 @@ function exportReport() {
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
 });
+
+
+// === Keyboard Navigation for Tabs ===
+
+function initTabKeyboardNavigation() {
+  const tabs = document.querySelectorAll('.tab[role="tab"]');
+  
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('keydown', (event) => {
+      let targetTab = null;
+      
+      // Arrow key navigation
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        targetTab = tabs[(index + 1) % tabs.length];
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        targetTab = tabs[(index - 1 + tabs.length) % tabs.length];
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        targetTab = tabs[0];
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        targetTab = tabs[tabs.length - 1];
+      }
+      
+      // Switch to target tab if valid
+      if (targetTab) {
+        // Update all tabs
+        tabs.forEach(t => {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
+          t.setAttribute('tabindex', '-1');
+        });
+        
+        // Activate target tab
+        targetTab.classList.add('active');
+        targetTab.setAttribute('aria-selected', 'true');
+        targetTab.setAttribute('tabindex', '0');
+        targetTab.focus();
+        
+        // Show corresponding content
+        const tabName = targetTab.dataset.tab;
+        switchTab(tabName);
+      }
+    });
+  });
+}
+
+// Enhanced tab switching with proper ARIA states
+function switchTab(tabName) {
+  // Hide all tab contents
+  document.querySelectorAll('.tab-content').forEach(content => {
+    content.classList.remove('active');
+    content.setAttribute('hidden', '');
+  });
+  
+  // Show selected tab content
+  const selectedContent = document.getElementById(`tab-${tabName}`);
+  if (selectedContent) {
+    selectedContent.classList.add('active');
+    selectedContent.removeAttribute('hidden');
+  }
+  
+  // Update tab buttons
+  document.querySelectorAll('.tab').forEach(tab => {
+    const isActive = tab.dataset.tab === tabName;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    tab.setAttribute('tabindex', isActive ? '0' : '-1');
+  });
+}
+
+// Enhanced button loading state
+function setButtonLoading(button, loading) {
+  const textSpan = button.querySelector('.button-text');
+  
+  if (loading) {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    if (textSpan) {
+      textSpan.dataset.originalText = textSpan.textContent;
+      textSpan.innerHTML = '<span class="loading-spinner" aria-hidden="true"></span> Processing...';
+    }
+  } else {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    if (textSpan && textSpan.dataset.originalText) {
+      textSpan.textContent = textSpan.dataset.originalText;
+      delete textSpan.dataset.originalText;
+    }
+  }
+}
+
+// Enhanced progress updates with ARIA
+function updateProgress(percentage, label) {
+  const container = document.getElementById('progress-container');
+  const bar = document.getElementById('progress-bar');
+  const percentageEl = document.getElementById('progress-percentage');
+  const labelEl = document.getElementById('progress-label');
+  
+  if (container && bar && percentageEl) {
+    container.setAttribute('aria-valuenow', percentage);
+    bar.style.width = `${percentage}%`;
+    percentageEl.textContent = `${percentage}%`;
+    
+    if (label && labelEl) {
+      labelEl.textContent = label;
+    }
+  }
+}
+
+// Enhanced error handling with focus management
+function showError(title, message) {
+  const errorContainer = document.getElementById('error-container');
+  const errorTitle = document.getElementById('error-title');
+  const errorMessage = document.getElementById('error-message');
+  
+  if (errorContainer && errorTitle && errorMessage) {
+    errorTitle.textContent = title;
+    errorMessage.textContent = message;
+    errorContainer.classList.add('active');
+    
+    // Move focus to error for screen readers
+    errorContainer.setAttribute('tabindex', '-1');
+    errorContainer.focus();
+  }
+}
+
+// Enhanced status message with focus announcement
+function showStatus(message, type = 'info') {
+  const status = document.getElementById('status');
+  if (status) {
+    status.textContent = message;
+    status.className = type; // 'success', 'error', 'loading', or 'info'
+    
+    // Brief focus for screen reader announcement
+    status.setAttribute('tabindex', '-1');
+    status.focus();
+    setTimeout(() => status.removeAttribute('tabindex'), 100);
+  }
+}
+
+// Initialize keyboard navigation on page load
+document.addEventListener('DOMContentLoaded', () => {
+  initTabKeyboardNavigation();
+  
+  // Add click handlers for tabs
+  document.querySelectorAll('.tab[role="tab"]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      switchTab(tabName);
+    });
+  });
+  
+  // Enhance form submission feedback
+  const uploadForm = document.getElementById('upload-form');
+  if (uploadForm) {
+    const submitButton = uploadForm.querySelector('button[type="submit"]');
+    uploadForm.addEventListener('submit', (event) => {
+      if (submitButton) {
+        setButtonLoading(submitButton, true);
+      }
+    });
+  }
+  
+  const askForm = document.getElementById('ask-form');
+  if (askForm) {
+    const submitButton = askForm.querySelector('button[type="submit"]');
+    askForm.addEventListener('submit', (event) => {
+      if (submitButton) {
+        setButtonLoading(submitButton, true);
+      }
+    });
+  }
+  
+  // Add keyboard shortcut hints (Alt+1 through Alt+5 for tabs)
+  document.addEventListener('keydown', (event) => {
+    if (event.altKey && event.key >= '1' && event.key <= '5') {
+      event.preventDefault();
+      const tabIndex = parseInt(event.key) - 1;
+      const tabs = document.querySelectorAll('.tab[role="tab"]');
+      if (tabs[tabIndex]) {
+        tabs[tabIndex].click();
+        tabs[tabIndex].focus();
+      }
+    }
+  });
+});

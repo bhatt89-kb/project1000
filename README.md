@@ -3,23 +3,121 @@
 A modern, privacy-first web application for analyzing rental and lease agreements. Upload a document and get instant analysis with plain-language summaries, flagged clauses, and Q&A capabilities.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+[![CI/CD](https://github.com/bhatt89-kb/project1000/workflows/CI%2FCD%20Pipeline/badge.svg)](https://github.com/bhatt89-kb/project1000/actions)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## 🎯 Live Demo
+
+**[Try the Live Application →](https://your-app-name.onrender.com)**
+
+> **Note:** Demo deployment URL will be added after completing deployment setup.
 
 ## ✨ Features
 
-- 📄 **Document Upload** - Support for PDF and TXT files (up to 5 MB)
-- 📊 **Smart Analysis** - Extracts key terms: rent, deposit, duration, notice period
-- 🔍 **Clause Detection** - Identifies 7 categories of important clauses
-- 💬 **Q&A System** - Ask questions and get exact passages with citations
-- ✅ **Pre-Signing Checklist** - Action items to review before signing
-- 🔒 **100% Private** - All processing happens locally, no data leaves your machine
+### Core Capabilities
+- 📄 **Document Upload** - PDF and TXT files (up to 5 MB)
+- 📊 **Risk Assessment** - 12-category risk scoring (0-10 scale)
+- 🔍 **Entity Extraction** - Dates, amounts, parties, obligations
+- 💬 **Smart Q&A** - Keyword-based search with exact citations
+- ⚖️ **Contract Comparison** - Side-by-side analysis of two documents
+- 📥 **Export Reports** - Generate HTML reports for printing/saving
+- ✅ **Pre-Signing Checklist** - Action items review before signing
 
-## 🎨 Modern UI
+### User Experience
+- 🎨 Modern tabbed interface with 5 organized sections
+- ⌨️ Full keyboard navigation (Arrow keys, Alt+1-5 shortcuts)
+- ♿ WCAG 2.1 compliant accessibility (ARIA labels, screen reader support)
+- 📱 Mobile-responsive design with touch-friendly controls
+- ⚡ Real-time progress indicators and loading states
+- 🔒 **100% Private** - All processing local, no external APIs
 
-- Beautiful gradient design with smooth animations
-- Card-based layout with professional styling
-- Mobile-responsive and accessible (WCAG compliant)
-- Loading states and real-time feedback
-- Dark purple gradient background
+## 🏗️ Architecture
+
+```mermaid
+graph TB
+    subgraph "Frontend Layer"
+        A[User Browser] --> B[index.html]
+        B --> C[app.js]
+    end
+    
+    subgraph "Backend API Layer"
+        C -->|HTTP POST| D[Flask Application]
+        D --> E[/api/upload]
+        D --> F[/api/ask]
+        D --> G[/api/compare]
+        D --> H[/api/export]
+    end
+    
+    subgraph "Processing Layer"
+        E --> I[parser.py]
+        I -->|Extract Text| J[pypdf / text decoder]
+        J --> K[Page List]
+        
+        K --> L[search.py]
+        L -->|Build Chunks| M[Clause Detection]
+        M --> N[Chunk List with Metadata]
+        
+        K --> O[analysis.py]
+        N --> O
+        O -->|Analyze| P[Risk Scoring]
+        O -->|Extract| Q[Entity Recognition]
+        O -->|Flag| R[Clause Detection]
+        O -->|Summarize| S[Key Terms]
+        
+        P --> T[Analysis Result]
+        Q --> T
+        R --> T
+        S --> T
+        
+        F --> L
+        L -->|Search| U[Keyword Matching]
+        U -->|Top-k| V[Relevant Passages]
+        
+        G --> W[compare_documents]
+        W --> X[Diff Analysis]
+        
+        H --> Y[generate_html_report]
+    end
+    
+    subgraph "Storage Layer"
+        T --> Z[(In-Memory Store)]
+        Z -.->|Retrieve| F
+        Z -.->|Retrieve| G
+        Z -.->|Retrieve| H
+    end
+    
+    style A fill:#667eea
+    style D fill:#764ba2
+    style O fill:#10b981
+    style Z fill:#f59e0b
+    
+    classDef frontend fill:#dbeafe,stroke:#2563eb
+    classDef backend fill:#fce7f3,stroke:#db2777
+    classDef processing fill:#d1fae5,stroke:#059669
+    
+    class B,C frontend
+    class E,F,G,H backend
+    class I,L,O,W,Y processing
+```
+
+### System Flow
+
+1. **Document Upload** → User uploads PDF/TXT → Flask validates (MIME, size, magic bytes) → Parser extracts pages
+2. **Text Processing** → Pages split into clause-aware chunks → Search builds keyword index with stemming
+3. **Analysis** → Multiple modules run: risk scoring, entity extraction, clause flagging, summarization
+4. **Storage** → Results stored in-memory with UUID → No disk persistence (privacy-first)
+5. **Q&A** → User question → Keyword search → Top-k relevant chunks returned with citations
+6. **Comparison** → Two documents analyzed → Differences highlighted → Risk levels compared
+7. **Export** → Analysis formatted as HTML → Print-optimized CSS → Download/save capability
+
+### Key Design Decisions
+
+- **No LLMs/Embeddings**: Rule-based processing ensures reproducibility and privacy
+- **Memory-only storage**: Documents never touch disk for maximum security
+- **Caching**: LRU cache on search terms (512 entries) for performance
+- **Rate limiting**: 10/min uploads, 30/min questions, 5/min comparisons
+- **Multi-stage Docker**: Separate build/runtime for 40% smaller images
 
 ## 🚀 Quick Deploy
 

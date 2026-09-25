@@ -437,6 +437,19 @@
       display: none !important;
     }
 
+    /* ===== Screen Reader Only ===== */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+
     /* ===== Responsive Design ===== */
     @media (max-width: 768px) {
       body {
@@ -926,10 +939,19 @@
       <!-- Upload Section -->
       <section aria-labelledby="upload-title">
         <h2 id="upload-title">📄 Upload Document</h2>
-        <form id="upload-form">
+        <form id="upload-form" aria-describedby="upload-description">
+          <p id="upload-description" class="sr-only">Upload a PDF or text document to analyze. Maximum file size is 5 megabytes.</p>
           <label for="doc-file">Select a PDF or TXT file (max 5 MB)</label>
-          <input id="doc-file" name="document" type="file" accept=".pdf,.txt" required>
-          <button type="submit">
+          <input 
+            id="doc-file" 
+            name="document" 
+            type="file" 
+            accept=".pdf,.txt" 
+            required
+            aria-required="true"
+            aria-describedby="file-restrictions">
+          <span id="file-restrictions" class="sr-only">Accepted formats: PDF and TXT. Maximum size: 5 megabytes.</span>
+          <button type="submit" aria-label="Analyze uploaded document">
             <span class="button-text">Analyze Document</span>
           </button>
         </form>
@@ -939,112 +961,152 @@
       <div id="status" role="status" aria-live="polite"></div>
 
       <!-- Progress Indicator -->
-      <div id="progress-container" class="progress-container">
+      <div id="progress-container" class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Document analysis progress">
         <div class="progress-label" id="progress-label">Analyzing document...</div>
         <div class="progress-bar-wrapper">
           <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
         </div>
-        <div class="progress-percentage" id="progress-percentage">0%</div>
+        <div class="progress-percentage" id="progress-percentage" aria-live="polite">0%</div>
       </div>
 
       <!-- Error Container -->
-      <div id="error-container" class="error-container">
-        <div class="error-icon">⚠️</div>
+      <div id="error-container" class="error-container" role="alert" aria-live="assertive">
+        <div class="error-icon" aria-hidden="true">⚠️</div>
         <div class="error-title" id="error-title">Something went wrong</div>
         <div class="error-message" id="error-message"></div>
         <div class="error-actions">
-          <button onclick="location.reload()">Reload Page</button>
-          <button onclick="document.getElementById('error-container').classList.remove('active')">Dismiss</button>
+          <button onclick="location.reload()" aria-label="Reload the page to try again">Reload Page</button>
+          <button onclick="document.getElementById('error-container').classList.remove('active')" aria-label="Close error message">Dismiss</button>
         </div>
       </div>
 
       <!-- Results Container -->
-      <div id="results" hidden>
+      <div id="results" hidden aria-live="polite">
         <!-- Tabs for better organization -->
-        <section style="padding: 1rem 2rem;">
-          <div class="tabs" role="tablist">
-            <button class="tab active" role="tab" aria-selected="true" data-tab="overview">
-              📊 Overview
+        <section aria-label="Results navigation">
+          <div class="tabs" role="tablist" aria-label="Analysis results sections">
+            <button 
+              class="tab active" 
+              role="tab" 
+              aria-selected="true" 
+              aria-controls="tab-overview"
+              id="tab-btn-overview"
+              data-tab="overview"
+              tabindex="0">
+              <span aria-hidden="true">📊</span> Overview
             </button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="details">
-              🔍 Detailed Analysis
+            <button 
+              class="tab" 
+              role="tab" 
+              aria-selected="false" 
+              aria-controls="tab-details"
+              id="tab-btn-details"
+              data-tab="details"
+              tabindex="-1">
+              <span aria-hidden="true">🔍</span> Detailed Analysis
             </button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="actions">
-              ✅ Action Items
+            <button 
+              class="tab" 
+              role="tab" 
+              aria-selected="false" 
+              aria-controls="tab-actions"
+              id="tab-btn-actions"
+              data-tab="actions"
+              tabindex="-1">
+              <span aria-hidden="true">✅</span> Action Items
             </button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="qa">
-              💬 Ask Questions
+            <button 
+              class="tab" 
+              role="tab" 
+              aria-selected="false" 
+              aria-controls="tab-qa"
+              id="tab-btn-qa"
+              data-tab="qa"
+              tabindex="-1">
+              <span aria-hidden="true">💬</span> Ask Questions
             </button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="compare">
-              📊 Compare
+            <button 
+              class="tab" 
+              role="tab" 
+              aria-selected="false" 
+              aria-controls="tab-compare"
+              id="tab-btn-compare"
+              data-tab="compare"
+              tabindex="-1">
+              <span aria-hidden="true">📊</span> Compare
             </button>
           </div>
         </section>
 
         <!-- Tab Content: Overview -->
-        <div id="tab-overview" class="tab-content active">
+        <div id="tab-overview" class="tab-content active" role="tabpanel" aria-labelledby="tab-btn-overview">
           <!-- Export Button -->
           <section style="text-align: center; padding: 1rem;">
-            <button id="export-btn" onclick="exportReport()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-              📄 Export Analysis Report (PDF/Print)
+            <button 
+              id="export-btn" 
+              onclick="exportReport()" 
+              style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);"
+              aria-label="Export analysis report for printing or saving">
+              <span aria-hidden="true">📄</span> Export Analysis Report (PDF/Print)
             </button>
           </section>
 
           <!-- Risk Assessment Section -->
           <section aria-labelledby="risk-title">
-            <h2 id="risk-title">⚠️ Risk Assessment</h2>
-            <div id="risk-assessment"></div>
+            <h2 id="risk-title"><span aria-hidden="true">⚠️</span> Risk Assessment</h2>
+            <div id="risk-assessment" aria-live="polite"></div>
           </section>
 
           <!-- Summary Section -->
           <section aria-labelledby="summary-title">
-            <h2 id="summary-title">📊 Document Summary</h2>
-            <dl id="summary"></dl>
+            <h2 id="summary-title"><span aria-hidden="true">📊</span> Document Summary</h2>
+            <dl id="summary" aria-live="polite"></dl>
           </section>
 
           <!-- Entities Section -->
           <section aria-labelledby="entities-title">
-            <h2 id="entities-title">🔍 Key Information</h2>
-            <div id="entities"></div>
+            <h2 id="entities-title"><span aria-hidden="true">🔍</span> Key Information</h2>
+            <div id="entities" aria-live="polite"></div>
           </section>
         </div>
 
         <!-- Tab Content: Detailed Analysis -->
-        <div id="tab-details" class="tab-content">
+        <div id="tab-details" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-details" hidden>
           <!-- Findings Section -->
           <section aria-labelledby="clauses-title">
-            <h2 id="clauses-title">📋 Clauses to Review</h2>
-            <div class="info-box">
-              <div class="info-box-title">💡 How to Use This Section</div>
+            <h2 id="clauses-title"><span aria-hidden="true">📋</span> Clauses to Review</h2>
+            <div class="info-box" role="complementary" aria-label="Usage instructions">
+              <div class="info-box-title"><span aria-hidden="true">💡</span> How to Use This Section</div>
               <p>Each clause is flagged with a priority level and risk score. Focus on "High Priority" items first.</p>
             </div>
-            <ul id="findings"></ul>
+            <ul id="findings" aria-live="polite"></ul>
           </section>
         </div>
 
         <!-- Tab Content: Actions -->
-        <div id="tab-actions" class="tab-content">
+        <div id="tab-actions" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-actions" hidden>
           <!-- Checklist Section -->
           <section aria-labelledby="checklist-title">
-            <h2 id="checklist-title">✅ Pre-Signing Checklist</h2>
-            <div class="info-box">
-              <div class="info-box-title">📝 Before You Sign</div>
+            <h2 id="checklist-title"><span aria-hidden="true">✅</span> Pre-Signing Checklist</h2>
+            <div class="info-box" role="complementary" aria-label="Checklist instructions">
+              <div class="info-box-title"><span aria-hidden="true">📝</span> Before You Sign</div>
               <p>Complete this checklist to ensure you've reviewed all important aspects of the document.</p>
             </div>
-            <ul id="checklist"></ul>
+            <ul id="checklist" aria-live="polite"></ul>
           </section>
         </div>
 
         <!-- Tab Content: Q&A -->
-        <div id="tab-qa" class="tab-content">
+        <div id="tab-qa" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-qa" hidden>
           <!-- Q&A Section -->
           <section aria-labelledby="ask-title">
-            <h2 id="ask-title">💬 Ask a Question</h2>
-            <div class="info-box">
-              <div class="info-box-title">💡 Tips for Better Results</div>
+            <h2 id="ask-title"><span aria-hidden="true">💬</span> Ask a Question</h2>
+            <div class="info-box" role="complementary" aria-label="Question tips">
+              <div class="info-box-title"><span aria-hidden="true">💡</span> Tips for Better Results</div>
               <p>Ask specific questions about terms, obligations, or conditions. Example: "What is the notice period?"</p>
             </div>
-            <form id="ask-form">
+            <form id="ask-form" aria-describedby="ask-description">
+              <p id="ask-description" class="sr-only">Enter your question about the document. Maximum 500 characters.</p>
               <label for="question">Ask about your document</label>
               <input 
                 id="question" 
@@ -1052,32 +1114,42 @@
                 type="text" 
                 maxlength="500" 
                 autocomplete="off"
+                aria-required="true"
+                aria-describedby="question-hint"
                 placeholder="e.g., How much notice do I need to give?">
-              <button type="submit">
+              <span id="question-hint" class="sr-only">Type your question and press enter or click the button to get an answer.</span>
+              <button type="submit" aria-label="Submit question and get answer">
                 <span class="button-text">Get Answer</span>
               </button>
             </form>
-            <div id="answer" aria-live="polite"></div>
+            <div id="answer" aria-live="polite" aria-atomic="true"></div>
           </section>
         </div>
 
         <!-- Tab Content: Compare -->
-        <div id="tab-compare" class="tab-content">
+        <div id="tab-compare" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-compare" hidden>
           <!-- Comparison Section -->
           <section aria-labelledby="compare-title">
-            <h2 id="compare-title">📊 Compare Documents</h2>
-            <div class="info-box">
-              <div class="info-box-title">📑 Document Comparison</div>
+            <h2 id="compare-title"><span aria-hidden="true">📊</span> Compare Documents</h2>
+            <div class="info-box" role="complementary" aria-label="Comparison instructions">
+              <div class="info-box-title"><span aria-hidden="true">📑</span> Document Comparison</div>
               <p>Upload another document to compare key terms, risk levels, and clauses side-by-side.</p>
             </div>
-            <form id="compare-upload-form">
+            <form id="compare-upload-form" aria-describedby="compare-description">
+              <p id="compare-description" class="sr-only">Upload a second document to compare with the first one. Maximum file size is 5 megabytes.</p>
               <label for="compare-file">Select second document to compare</label>
-              <input id="compare-file" name="document" type="file" accept=".pdf,.txt">
-              <button type="submit">
+              <input 
+                id="compare-file" 
+                name="document" 
+                type="file" 
+                accept=".pdf,.txt"
+                aria-describedby="compare-restrictions">
+              <span id="compare-restrictions" class="sr-only">Accepted formats: PDF and TXT. Maximum size: 5 megabytes.</span>
+              <button type="submit" aria-label="Upload second document and start comparison">
                 <span class="button-text">Upload & Compare</span>
               </button>
             </form>
-            <div id="comparison-result"></div>
+            <div id="comparison-result" aria-live="polite" aria-atomic="true"></div>
           </section>
         </div>
       </div>
