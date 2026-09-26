@@ -8,11 +8,11 @@ import hashlib
 import uuid
 from typing import Dict, List, Optional, TypedDict, Any
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-from legallens.analysis import analyze
+from legallens.analysis import analyze, compare_documents
 from legallens.parser import MAX_BYTES, UnsupportedFileError, extract_pages
 from legallens.search import build_chunks, search
 
@@ -248,148 +248,208 @@ def validate_file_upload(file) -> tuple[bool, Optional[str]]:
                 return False, "File does not appear to be valid text."
     
     return True, None
-    allowed_extensions = {'.pdf', '.txt'}
-    file_ext = '.' + filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-    if file_ext not in allowed_extensions:
-        return False, "Only PDF and TXT files are supported."
+
+
+# =============================================================================
+# FLASK ROUTES AND MIDDLEWARE
+# =============================================================================
+
+@app.after_request
+def add_security_headers(response):
+    """Add comprehensive security headers to all responses.
     
-    # Check file size before reading (peek at content length if available)
-    file.seek(0, 2)  # Seek to end
-    size = file.tell()
-    file.seek(0)  # Reset to start
+    Headers added:
+    - X-Content-Type-Options: Prevent MIME sniffing
+    - X-Frame-Options: Prevent clickjacking
+    - Referrer-Policy: Control referrer information
+    - Content-Security-Policy: Restrict resource loading
+    - Strict-Transport-Security: Force HTTPS (HSTS)
+    - Permissions-Policy: Restrict browser features
+    - X-Permitted-Cross-Domain-Policies: Restrict cross-domain policies
     
-    if size == 0:
-        return False, "The uploaded file is empty."
+    All headers meet OWASP security best practices.
+    """
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
     
-    if size > MAX_BYTES:
-        return False, f"The file is larger than {MAX_BYTES // (1024 * 1024)} MB."
+    # Prevent clickjacking attacks
+    response.headers["X-Frame-Options"] = "DENY"
     
-    # Basic MIME type validation (check file signature/magic bytes)
-    file_start = file.read(8)
-    file.seek(0)
+    # Control referrer information leakage
+    response.headers["Referrer-Policy"] = "no-referrer"
     
-    # PDF magic bytes: %PDF
-    # Text files: typically ASCII/UTF-8 printable characters
-    if file_ext == '.pdf':
-        if not file_start.startswith(b'%PDF'):
-            return False, "File does not appear to be a valid PDF."
-    elif file_ext == '.txt':
-        # Check if file starts with reasonable text bytes (not binary garbage)
-        try:
-            file_start.decode('utf-8', errors='strict')
-        except UnicodeDecodeError:
-            # Try with relaxed checking for different encodings
-            if not any(b >= 0x20 and b <= 0x7E or b in (0x09, 0x0A, 0x0D) for b in file_start[:100]):
-                return False, "File does not appear to be valid text."
+    # Content Security Policy - restrict resource loading to same origin
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
     
-    return True, None
+    # Force HTTPS connections (HSTS) - max age 1 year, include subdomains
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    
+    # Restrict browser features for privacy
+    response.headers["Permissions-Policy"] = (
+        "geolocation=(), "
+        "microphone=(), "
+        "camera=(), "
+        "payment=(), "
+        "usb=(), "
+        "magnetometer=(), "
+        "gyroscope=(), "
+        "accelerometer=()"
+    )
+    
+    # Restrict cross-domain policies
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+    
+    return response
+
+
+@app.errorhandler(413)
+def file_too_large(_):
+    """Handle file upload size limit exceeded error."""
+    return error("The file is larger than 5 MB.", 413)
+
+
+@app.get("/")
+def index():
+    """Serve the main application HTML page."""
+    return send_from_directory(app.static_folder, "index.html")
 
 
 @app.post("/api/upload")
-@limiter.limit("10 per minute")
+@limiter.limit(f"{RATE_LIMIT_UPLOAD} per minute")
 def upload():
+    """Upload and analyze a legal document.
+    
+    Process:
+    1. Validate uploaded file (security checks)
+    2. Check content hash for duplicate detection
+    3. Extract text from PDF/TXT
+    4. Analyze document (risk scoring, entity extraction)
+    5. Store results in memory with UUID
+    
+    Returns:
+        JSON with document ID, summary, risk assessment, entities, findings, checklist
+        
+    Rate Limited:
+        10 uploads per minute per IP address
+    """
     uploaded = request.files.get("document")
     
-    # Validate file upload
+    # Step 1: Validate file upload (security critical)
     is_valid, error_message = validate_file_upload(uploaded)
     if not is_valid:
         return error(error_message, 400)
     
     try:
-        # Read file content with size limit enforced
+        # Step 2: Read file content with size limit enforced
         file_content = uploaded.read(MAX_BYTES + 1)
         if len(file_content) > MAX_BYTES:
             return error(f"File exceeds maximum size of {MAX_BYTES // (1024 * 1024)} MB.", 413)
         
+        # Step 3: Check content hash for duplicate detection (efficiency optimization)
+        content_hash = get_content_hash(file_content)
+        if content_hash in CONTENT_CACHE:
+            # Duplicate detected - return cached result with new document ID
+            cached_data = CONTENT_CACHE[content_hash]
+            document_id = uuid.uuid4().hex
+            DOCUMENTS[document_id] = cached_data
+            return jsonify(id=document_id, **cached_data["result"])
+        
+        # Step 4: Extract pages from PDF or text file
         pages = extract_pages(uploaded.filename, file_content)
+        
     except UnsupportedFileError as exc:
         return error(str(exc), 400)
     except Exception as exc:
-        # Log unexpected errors but don't expose internal details
+        # Log unexpected errors but don't expose internal details to user
         app.logger.error(f"Upload error: {type(exc).__name__}: {exc}")
         return error("Failed to process the document. Please try again.", 500)
-
+    
+    # Step 5: Build searchable chunks from pages
     chunks = build_chunks(pages)
+    
+    # Step 6: Analyze document for risks, entities, and key terms
     result = analyze(pages, chunks)
+    
+    # Step 7: Enforce document limit (prevent memory exhaustion)
     if len(DOCUMENTS) >= MAX_DOCUMENTS:
-        DOCUMENTS.pop(next(iter(DOCUMENTS)))  # forget the oldest document
+        # Remove oldest document (FIFO)
+        oldest_id = next(iter(DOCUMENTS))
+        DOCUMENTS.pop(oldest_id)
+    
+    # Step 8: Generate unique document ID and store results
     document_id = uuid.uuid4().hex
-    DOCUMENTS[document_id] = {"chunks": chunks, "result": result}
+    document_data: DocumentData = {"chunks": chunks, "result": result}
+    DOCUMENTS[document_id] = document_data
+    
+    # Step 9: Cache by content hash for future duplicate detection
+    CONTENT_CACHE[content_hash] = document_data
+    
+    # Step 10: Return analysis results with document ID
     return jsonify(id=document_id, **result)
 
 
-def sanitize_input(value, max_length=500, allow_newlines=True):
-    """Sanitize and validate user input strings.
-    
-    Args:
-        value: Input value to sanitize
-        max_length: Maximum allowed length
-        allow_newlines: Whether to allow newline characters
-        
-    Returns:
-        str: Sanitized string
-    """
-    if value is None:
-        return ""
-    
-    text = str(value).strip()
-    
-    # Remove null bytes and other control characters (except newlines/tabs if allowed)
-    if allow_newlines:
-        text = ''.join(char for char in text if char.isprintable() or char in ('\n', '\r', '\t'))
-    else:
-        text = ''.join(char for char in text if char.isprintable())
-    
-    # Truncate to max length
-    return text[:max_length]
-
-
-def validate_uuid(value):
-    """Validate that a string is a valid UUID hex format.
-    
-    Args:
-        value: String to validate
-        
-    Returns:
-        bool: True if valid UUID hex
-    """
-    if not isinstance(value, str):
-        return False
-    
-    # UUID hex is 32 hexadecimal characters
-    return len(value) == 32 and all(c in '0123456789abcdef' for c in value.lower())
-
-
 @app.post("/api/ask")
-@limiter.limit("30 per minute")
+@limiter.limit(f"{RATE_LIMIT_QUESTIONS} per minute")
 def ask():
+    """Ask a question about an uploaded document.
+    
+    Uses keyword-based search with stemming and stopword filtering.
+    Returns up to 3 most relevant passages with page numbers and clause references.
+    
+    Rate Limited:
+        30 questions per minute per IP address
+    """
     body = request.get_json(silent=True) or {}
     
-    # Validate document ID format
+    # Validate document ID format (security: prevent enumeration attacks)
     doc_id = str(body.get("id", ""))
     if not validate_uuid(doc_id):
-        return error("Invalid document ID format.", 400)
+        return error(INVALID_UUID_MESSAGE, 400)
     
+    # Check if document exists in memory
     document = DOCUMENTS.get(doc_id)
     if document is None:
-        return error("Document not found. Please upload it again.", 404)
+        return error(DOCUMENT_NOT_FOUND_MESSAGE, 404)
     
-    # Sanitize and validate question
+    # Sanitize and validate question input
     question = sanitize_input(body.get("question", ""), MAX_QUESTION_CHARS, allow_newlines=False)
     if not question:
         return error("Please type a question.", 400)
     
-    if len(question) < 3:
+    if len(question) < MIN_QUESTION_CHARS:
         return error("Question is too short. Please provide more detail.", 400)
-
+    
+    # Search for relevant passages using keyword matching
     matches = search(document["chunks"], question)
-    return jsonify(matches=matches, message="" if matches else NOT_FOUND_MESSAGE)
+    
+    # Return matches or helpful message if nothing found
+    return jsonify(
+        matches=matches,
+        message="" if matches else NOT_FOUND_MESSAGE
+    )
 
 
 @app.post("/api/compare")
-@limiter.limit("5 per minute")
+@limiter.limit(f"{RATE_LIMIT_COMPARISONS} per minute")
 def compare():
-    """Compare two documents side-by-side and highlight differences in key terms."""
+    """Compare two documents side-by-side.
+    
+    Highlights differences in:
+    - Summary fields (rent, deposit, duration)
+    - Risk levels and scores
+    - Unique clauses present in each document
+    
+    Rate Limited:
+        5 comparisons per minute per IP address
+    """
     body = request.get_json(silent=True) or {}
     
     # Validate both document IDs
@@ -397,26 +457,33 @@ def compare():
     doc2_id = str(body.get("id2", ""))
     
     if not validate_uuid(doc1_id) or not validate_uuid(doc2_id):
-        return error("Invalid document ID format.", 400)
+        return error(INVALID_UUID_MESSAGE, 400)
     
+    # Prevent comparing document with itself
     if doc1_id == doc2_id:
         return error("Cannot compare a document with itself.", 400)
     
+    # Check both documents exist
     doc1 = DOCUMENTS.get(doc1_id)
     doc2 = DOCUMENTS.get(doc2_id)
     
     if doc1 is None or doc2 is None:
-        return error("One or both documents not found. Please upload them again.", 404)
+        return error(DOCUMENT_NOT_FOUND_MESSAGE, 404)
     
-    from legallens.analysis import compare_documents
+    # Perform comparison analysis
     comparison = compare_documents(doc1["result"], doc2["result"])
     
     return jsonify(comparison)
 
 
 @app.get("/api/documents")
+@limiter.limit(f"{RATE_LIMIT_LIST_DOCS} per minute")
 def list_documents():
-    """Return a list of currently uploaded documents for comparison selection."""
+    """Return list of currently uploaded documents.
+    
+    Used for document selection in comparison feature.
+    Returns basic metadata only (type, pages) to minimize response size.
+    """
     doc_list = []
     for doc_id, doc_data in DOCUMENTS.items():
         summary = doc_data["result"]["summary"]
@@ -429,29 +496,56 @@ def list_documents():
 
 
 @app.get("/api/export/<document_id>")
-def export_report(document_id):
-    """Export analysis report as HTML for printing/saving."""
+@limiter.limit(f"{RATE_LIMIT_EXPORT} per minute")
+def export_report(document_id: str):
+    """Export analysis report as HTML for printing/saving.
+    
+    Generates a formatted HTML report with:
+    - Risk assessment summary
+    - Document summary
+    - Key information (dates, amounts, parties)
+    - Flagged clauses with explanations
+    - Pre-signing checklist
+    - Professional styling for print
+    
+    Args:
+        document_id: UUID of document to export
+        
+    Returns:
+        HTML document with embedded CSS
+    """
     # Validate document ID format
     if not validate_uuid(document_id):
-        return error("Invalid document ID format.", 400)
+        return error(INVALID_UUID_MESSAGE, 400)
     
+    # Check document exists
     document = DOCUMENTS.get(document_id)
     if document is None:
-        return error("Document not found.", 404)
+        return error(DOCUMENT_NOT_FOUND_MESSAGE, 404)
     
     result = document["result"]
     
-    # Generate HTML report
+    # Generate HTML report with professional formatting
     html_report = generate_html_report(result)
     
-    from flask import Response
     response = Response(html_report, mimetype='text/html')
-    response.headers['Content-Disposition'] = f'inline; filename="legal-analysis-report.html"'
+    response.headers['Content-Disposition'] = 'inline; filename="legal-analysis-report.html"'
     return response
 
 
-def generate_html_report(result):
-    """Generate a formatted HTML report of the analysis."""
+# =============================================================================
+# REPORT GENERATION HELPERS
+# =============================================================================
+
+def generate_html_report(result: AnalysisResult) -> str:
+    """Generate a formatted HTML report of the analysis.
+    
+    Args:
+        result: Analysis result containing summary, findings, entities, etc.
+        
+    Returns:
+        Complete HTML document as string
+    """
     summary = result["summary"]
     findings = result["findings"]
     entities = result.get("entities", {})
@@ -707,8 +801,15 @@ def generate_html_report(result):
     return html
 
 
-def generate_findings_html(findings):
-    """Generate HTML for findings section."""
+def generate_findings_html(findings: List[Dict[str, Any]]) -> str:
+    """Generate HTML for findings section.
+    
+    Args:
+        findings: List of finding dictionaries
+        
+    Returns:
+        HTML string for findings section
+    """
     if not findings:
         return '<p style="color: #6b7280; text-align: center; padding: 2rem;">No issues found.</p>'
     
