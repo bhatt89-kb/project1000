@@ -15,8 +15,8 @@
       --warning: #f59e0b;
       --danger: #ef4444;
       --text-primary: #1f2937;
-      --text-secondary: #6b7280;
-      --text-muted: #9ca3af;
+      --text-secondary: #4b5563;  /* Changed from #6b7280 to #4b5563 for WCAG AAA contrast (7:1 ratio on white background) */
+      --text-muted: #6b7280;      /* Kept for less critical text */
       --bg-primary: #ffffff;
       --bg-secondary: #f9fafb;
       --bg-tertiary: #f3f4f6;
@@ -927,15 +927,17 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
+  <a class="skip-link" href="#results">Skip to results</a>
+  <a class="skip-link" href="#upload-form">Skip to upload</a>
 
   <div class="container">
-    <header>
+    <header role="banner">
       <h1>⚖️ Legal Document Assistant</h1>
       <p class="subtitle">Analyze rental and lease agreements with confidence</p>
-      <div class="badge">🔒 100% Private & Secure</div>
+      <div class="badge" aria-label="Privacy guarantee">🔒 100% Private & Secure</div>
     </header>
 
-    <main id="main">
+    <main id="main" role="main">
       <!-- Upload Section -->
       <section aria-labelledby="upload-title">
         <h2 id="upload-title">📄 Upload Document</h2>

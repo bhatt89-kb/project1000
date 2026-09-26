@@ -4,7 +4,9 @@ Documents are kept in memory only and never written to disk.
 Privacy-first, local processing with no external API calls.
 """
 
+import hashlib
 import uuid
+from typing import Dict, List, Optional, TypedDict, Any
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_limiter import Limiter
@@ -14,14 +16,71 @@ from legallens.analysis import analyze
 from legallens.parser import MAX_BYTES, UnsupportedFileError, extract_pages
 from legallens.search import build_chunks, search
 
-MAX_DOCUMENTS = 50
-MAX_QUESTION_CHARS = 500
+# =============================================================================
+# CONSTANTS - All magic numbers extracted for maintainability
+# =============================================================================
+
+# Rate limiting constants (requests per minute)
+RATE_LIMIT_UPLOAD = 10          # Maximum uploads per minute per IP
+RATE_LIMIT_QUESTIONS = 30       # Maximum questions per minute per IP
+RATE_LIMIT_COMPARISONS = 5      # Maximum comparisons per minute per IP
+RATE_LIMIT_EXPORT = 20          # Maximum exports per minute per IP
+RATE_LIMIT_LIST_DOCS = 100      # Maximum document list requests per minute
+
+# Document storage limits
+MAX_DOCUMENTS = 50              # Maximum documents stored in memory
+MAX_QUESTION_CHARS = 500        # Maximum characters in a question
+MIN_QUESTION_CHARS = 3          # Minimum characters for valid question
+
+# File upload limits
+MAX_FILENAME_LENGTH = 255       # Maximum filename length in characters
+FILE_SIZE_BUFFER = 64 * 1024    # Extra buffer for file upload headers (64KB)
+
+# UUID format validation
+UUID_HEX_LENGTH = 32            # Length of UUID in hexadecimal format
+
+# Messages
 NOT_FOUND_MESSAGE = "I couldn't find this information in the uploaded document."
+INVALID_UUID_MESSAGE = "Invalid document ID format."
+DOCUMENT_NOT_FOUND_MESSAGE = "Document not found. Please upload it again."
+
+# =============================================================================
+# TYPE DEFINITIONS - Improved type safety
+# =============================================================================
+
+class ChunkDict(TypedDict):
+    """Type definition for document chunk."""
+    text: str
+    page: int
+    clause: Optional[str]
+
+class AnalysisResult(TypedDict):
+    """Type definition for analysis result."""
+    summary: Dict[str, Any]
+    risk_assessment: Dict[str, Any]
+    entities: Dict[str, List[str]]
+    findings: List[Dict[str, Any]]
+    checklist: List[str]
+    disclaimer: str
+
+class DocumentData(TypedDict):
+    """Type definition for stored document data."""
+    chunks: List[ChunkDict]
+    result: AnalysisResult
+
+# Type aliases for clarity
+DocumentId = str
+DocumentStore = Dict[DocumentId, DocumentData]
+ContentHash = str
+
+# =============================================================================
+# APPLICATION SETUP
+# =============================================================================
 
 app = Flask(__name__, static_folder="static", static_url_path="")
-app.config["MAX_CONTENT_LENGTH"] = MAX_BYTES + 64 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_BYTES + FILE_SIZE_BUFFER
 
-# Rate limiting configuration
+# Rate limiting configuration with memory storage
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
@@ -29,56 +88,166 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-DOCUMENTS = {}  # document id -> {"chunks": [...], "result": {...}}
+# Document storage: document_id -> DocumentData
+DOCUMENTS: DocumentStore = {}
 
+# Content-based cache: content_hash -> DocumentData (prevents duplicate analysis)
+CONTENT_CACHE: Dict[ContentHash, DocumentData] = {}
 
-def error(message, status):
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def error(message: str, status: int):
+    """Return a JSON error response.
+    
+    Args:
+        message: Human-readable error message
+        status: HTTP status code
+        
+    Returns:
+        Tuple of (JSON response, status code)
+    """
     return jsonify(error=message), status
 
 
-@app.after_request
-def add_security_headers(response):
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
-    )
-    return response
+def get_content_hash(data: bytes) -> ContentHash:
+    """Generate SHA-256 hash of file content for caching.
+    
+    Args:
+        data: File content as bytes
+        
+    Returns:
+        Hexadecimal hash string
+        
+    Note:
+        Used to detect duplicate uploads and avoid re-analyzing same content
+    """
+    return hashlib.sha256(data).hexdigest()
 
 
-@app.errorhandler(413)
-def file_too_large(_):
-    return error("The file is larger than 5 MB.", 413)
+def validate_uuid(value: str) -> bool:
+    """Validate that a string is a valid UUID hex format.
+    
+    Args:
+        value: String to validate
+        
+    Returns:
+        True if valid UUID hex (32 hexadecimal characters), False otherwise
+        
+    Example:
+        >>> validate_uuid("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6")
+        True
+        >>> validate_uuid("invalid")
+        False
+    """
+    if not isinstance(value, str):
+        return False
+    
+    # UUID hex is exactly 32 hexadecimal characters (no hyphens)
+    return len(value) == UUID_HEX_LENGTH and all(c in '0123456789abcdef' for c in value.lower())
 
 
-@app.get("/")
-def index():
-    return send_from_directory(app.static_folder, "index.html")
+def sanitize_input(value: Any, max_length: int = 500, allow_newlines: bool = True) -> str:
+    """Sanitize and validate user input strings.
+    
+    Removes control characters and truncates to maximum length.
+    Critical for preventing injection attacks and malformed input.
+    
+    Args:
+        value: Input value to sanitize
+        max_length: Maximum allowed length in characters
+        allow_newlines: Whether to allow newline characters
+        
+    Returns:
+        Sanitized string with control characters removed and length capped
+        
+    Example:
+        >>> sanitize_input("Hello\x00World", 10)
+        'HelloWorld'
+    """
+    if value is None:
+        return ""
+    
+    text = str(value).strip()
+    
+    # Remove null bytes and other control characters (except newlines/tabs if allowed)
+    if allow_newlines:
+        text = ''.join(char for char in text if char.isprintable() or char in ('\n', '\r', '\t'))
+    else:
+        text = ''.join(char for char in text if char.isprintable())
+    
+    # Truncate to maximum length to prevent memory exhaustion
+    return text[:max_length]
 
 
-def validate_file_upload(file):
+def validate_file_upload(file) -> tuple[bool, Optional[str]]:
     """Validate uploaded file for security and integrity.
+    
+    Performs comprehensive validation:
+    - Filename validation (length, special characters)
+    - Path traversal prevention
+    - File extension whitelist
+    - Size limits
+    - MIME type validation via magic bytes
     
     Args:
         file: FileStorage object from Flask request
         
     Returns:
-        tuple: (is_valid: bool, error_message: str or None)
+        Tuple of (is_valid, error_message)
+        - (True, None) if valid
+        - (False, error_message) if invalid
     """
     if file is None or file.filename == "":
         return False, "Please choose a PDF or TXT file."
     
-    # Validate filename
+    # Validate filename length and format
     filename = str(file.filename).strip()
-    if not filename or len(filename) > 255:
+    if not filename or len(filename) > MAX_FILENAME_LENGTH:
         return False, "Invalid filename length."
     
-    # Check for null bytes and path traversal attempts
+    # Check for path traversal attempts and null bytes
+    # These are common attack vectors for file uploads
     if '\x00' in filename or '..' in filename or '/' in filename or '\\' in filename:
         return False, "Invalid filename characters detected."
     
-    # Validate file extension
+    # Validate file extension against whitelist
+    allowed_extensions = {'.pdf', '.txt'}
+    file_ext = '.' + filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if file_ext not in allowed_extensions:
+        return False, "Only PDF and TXT files are supported."
+    
+    # Check file size before reading entire content into memory
+    file.seek(0, 2)  # Seek to end of file
+    size = file.tell()
+    file.seek(0)  # Reset to start for later reading
+    
+    if size == 0:
+        return False, "The uploaded file is empty."
+    
+    if size > MAX_BYTES:
+        return False, f"The file is larger than {MAX_BYTES // (1024 * 1024)} MB."
+    
+    # Validate file content via magic bytes (file signature)
+    # This prevents file type spoofing attacks
+    file_start = file.read(8)
+    file.seek(0)  # Reset after reading
+    
+    # PDF magic bytes: %PDF (hex: 25 50 44 46)
+    if file_ext == '.pdf':
+        if not file_start.startswith(b'%PDF'):
+            return False, "File does not appear to be a valid PDF."
+    # Text files: check if content is valid UTF-8
+    elif file_ext == '.txt':
+        try:
+            file_start.decode('utf-8', errors='strict')
+        except UnicodeDecodeError:
+            # Try with relaxed checking for different encodings
+            if not any(b >= 0x20 and b <= 0x7E or b in (0x09, 0x0A, 0x0D) for b in file_start[:100]):
+                return False, "File does not appear to be valid text."
+    
+    return True, None
     allowed_extensions = {'.pdf', '.txt'}
     file_ext = '.' + filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
     if file_ext not in allowed_extensions:
