@@ -565,8 +565,10 @@ def test_export_nonexistent_document(client):
 
 def test_export_generates_valid_html(client):
     """Test that export generates valid HTML."""
-    # Clear documents to avoid rate limiting issues
+    # Clear documents and wait to avoid rate limiting
     DOCUMENTS.clear()
+    import time
+    time.sleep(6)  # Wait for rate limit reset
     
     upload = client.post("/api/upload", data={"document": (io.BytesIO(SAMPLE.encode()), "test.txt")})
     assert upload.status_code == 200
